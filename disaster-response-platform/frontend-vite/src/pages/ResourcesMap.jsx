@@ -480,8 +480,7 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
           title="Failed to Load"
           message={error}
           onRetry={loadResources}
-        />
-      ) : !selectedDisaster ? (
+        />      ) : viewMode === 'disaster' && !selectedDisaster ? (
         <Box textAlign="center" p={8}>
           <Text>Please select a disaster to view resources.</Text>
         </Box>

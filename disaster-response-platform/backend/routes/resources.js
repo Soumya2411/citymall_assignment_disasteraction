@@ -10,18 +10,18 @@ router.use(mockAuth);
 
 /**
  * @route   GET /api/disasters/:id/resources
- * @desc    Get resources for a specific disaster with optional geospatial filtering
+ * @desc    Get resources near a specific disaster location
  * @access  Public (authenticated)
  * @param   {string} id - Disaster ID
- * @param   {string} lat - Optional latitude for geospatial filtering
- * @param   {string} lng - Optional longitude for geospatial filtering
  * @param   {number} radius - Optional radius in kilometers for geospatial filtering (default: 10)
+ * @param   {string} type - Optional resource type filter
  */
 router.get('/:id/resources', async (req, res) => {
   try {
     const { id } = req.params;
-    const { lat, lng, radius = 10, type } = req.query;
-      // Get disaster location using SQL to extract coordinates directly
+    const { radius = 10, type } = req.query;
+    
+    // Get disaster location using SQL to extract coordinates directly
     const { data: coordinatesArray, error: disasterError } = await supabase
       .rpc('get_disaster_coordinates', { disaster_id: id });
     
@@ -51,13 +51,6 @@ router.get('/:id/resources', async (req, res) => {
     }
     
     const { longitude, latitude } = coordinates;
-    
-    // Start building the query to find resources near the disaster
-    let query = supabase.from('resources').select('*');
-      // Filter by resource type if provided
-    if (type) {
-      query = query.eq('type', type);
-    }
     
     // Apply geospatial filtering using disaster's location with RPC function
     try {
@@ -106,42 +99,111 @@ router.get('/:id/resources', async (req, res) => {
 });
 
 /**
- * @route   POST /api/disasters/:id/resources
- * @desc    Create a new resource for a specific disaster
+ * @route   GET /api/resources
+ * @desc    Get all resources with optional geospatial filtering
  * @access  Public (authenticated)
+ * @param   {string} lat - Optional latitude for geospatial filtering
+ * @param   {string} lng - Optional longitude for geospatial filtering
+ * @param   {number} radius - Optional radius in kilometers for geospatial filtering (default: 10)
+ * @param   {string} type - Optional resource type filter
  */
-router.post('/:id/resources', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { name, location_name, type } = req.body;
+    const { lat, lng, radius = 10, type } = req.query;
+    
+    // Apply geospatial filtering if lat and lng are provided
+    if (lat && lng) {
+      try {
+        const latitude = parseFloat(lat);
+        const longitude = parseFloat(lng);
+        const radiusMeters = parseFloat(radius) * 1000; // Convert km to meters
+        
+        // Use Supabase RPC function for geospatial query instead of raw PostGIS
+        const { data, error } = await supabase
+          .rpc('get_resources_near_point', {
+            center_lng: longitude,
+            center_lat: latitude,
+            radius_meters: radiusMeters,
+            resource_type: type || null
+          });
+        
+        if (error) {
+          logger.error({ error }, 'Error fetching resources near location using RPC');
+          return res.status(500).json({
+            error: 'Database error',
+            message: error.message,
+          });
+        }
+        
+        logger.info({ count: data.length, lat, lng, radius }, 'Resources fetched successfully with location filter');
+        return res.status(200).json(data);
+      } catch (error) {
+        logger.error({ error }, 'Invalid location format for geospatial query');
+        return res.status(400).json({
+          error: 'Invalid location format',
+          message: 'Location should be in format lat,lng and radius should be a number in kilometers',
+        });
+      }
+    }
+      // If no location filtering, get all resources with type filter only
+    const { data, error } = await supabase
+      .rpc('get_resources_with_text_location', {
+        p_resource_type: type || null,
+        p_center_lat: null,
+        p_center_lng: null,
+        p_radius_meters: null
+      });
+    
+    if (error) {
+      logger.error({ error }, 'Error fetching resources');
+      return res.status(500).json({
+        error: 'Database error',
+        message: error.message,
+      });
+    }
+    
+    logger.info({ count: data.length, type, radius }, 'All resources fetched successfully');
+    res.status(200).json(data);
+  } catch (error) {
+    logger.error({ error }, 'Error in GET /resources');
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * @route   POST /api/resources
+ * @desc    Create a new resource (independent of disasters)
+ * @access  Contributors and Admins only
+ */
+router.post('/', async (req, res) => {
+  try {
+    // Check if user has permission to create resources (contributors and admins only)
+    if (req.user.role !== 'admin' && req.user.role !== 'contributor') {
+      logger.warn(`User ${req.user.id} with role ${req.user.role} not authorized to create resources`);
+      return res.status(403).json({
+        error: 'Not authorized',
+        message: 'Only contributors and administrators can create resources',
+      });
+    }
+
+    const { 
+      name, 
+      location_name, 
+      type, 
+      description, 
+      availability_status, 
+      contact_info, 
+      capacity 
+    } = req.body;
     
     // Validate required fields
     if (!name || !location_name || !type) {
       return res.status(400).json({
         error: 'Missing required fields',
         message: 'Name, location_name, and type are required',
-      });
-    }
-    
-    // Check if disaster exists
-    const { data: disaster, error: disasterError } = await supabase
-      .from('disasters')
-      .select('id')
-      .eq('id', id)
-      .single();
-    
-    if (disasterError) {
-      if (disasterError.message.includes('No rows found')) {
-        return res.status(404).json({
-          error: 'Not found',
-          message: `Disaster with ID ${id} not found`,
-        });
-      }
-      
-      logger.error({ error: disasterError }, 'Error checking disaster existence');
-      return res.status(500).json({
-        error: 'Database error',
-        message: disasterError.message,
       });
     }
     
@@ -166,17 +228,22 @@ router.post('/:id/resources', async (req, res) => {
     
     // Create the resource with geometry
     const resourceData = {
-      disaster_id: id,
       name,
       location_name,
       type,
       location: `POINT(${coordinates.lng} ${coordinates.lat})`,
     };
     
+    // Add optional fields if provided
+    if (description) resourceData.description = description;
+    if (availability_status) resourceData.availability_status = availability_status;
+    if (contact_info) resourceData.contact_info = contact_info;
+    if (capacity !== undefined) resourceData.capacity = capacity;
+    
     const { data, error } = await supabase
       .from('resources')
       .insert(resourceData)
-      .select()
+      .select('id')
       .single();
     
     if (error) {
@@ -187,23 +254,37 @@ router.post('/:id/resources', async (req, res) => {
       });
     }
     
+    // Fetch the created resource with properly formatted location data
+    const { data: resourceWithLocation, error: fetchError } = await supabase
+      .rpc('get_resource_with_text_location', {
+        p_resource_id: data.id
+      });
+    
+    if (fetchError || !resourceWithLocation || resourceWithLocation.length === 0) {
+      logger.error({ error: fetchError }, 'Error fetching created resource');
+      return res.status(500).json({
+        error: 'Database error',
+        message: 'Resource created but could not fetch details',
+      });
+    }
+    
+    const createdResource = resourceWithLocation[0];
+    
     // Emit socket event for real-time updates
     req.io.emit('resources_updated', {
       action: 'create',
-      disaster_id: id,
-      resource: data,
+      resource: createdResource,
     });
     
     logger.info({
-      resourceId: data.id,
-      disasterId: id,
+      resourceId: createdResource.id,
       name,
       location: location_name,
     }, 'Resource created successfully');
     
-    res.status(201).json(data);
+    res.status(201).json(createdResource);
   } catch (error) {
-    logger.error({ error }, 'Error in POST /disasters/:id/resources');
+    logger.error({ error }, 'Error in POST /resources');
     res.status(500).json({
       error: 'Server error',
       message: error.message,
@@ -212,28 +293,84 @@ router.post('/:id/resources', async (req, res) => {
 });
 
 /**
- * @route   PUT /api/disasters/:id/resources/:resourceId
- * @desc    Update a resource
+ * @route   GET /api/resources/:id
+ * @desc    Get a specific resource by ID
  * @access  Public (authenticated)
  */
-router.put('/:id/resources/:resourceId', async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const { id, resourceId } = req.params;
-    const { name, location_name, type } = req.body;
+    const { id } = req.params;
     
-    // Check if resource exists and belongs to the disaster
+    const { data, error } = await supabase
+      .rpc('get_resource_with_text_location', {
+        p_resource_id: id
+      });
+    
+    if (error) {
+      if (error.message.includes('No rows found') || !data || data.length === 0) {
+        return res.status(404).json({
+          error: 'Not found',
+          message: `Resource with ID ${id} not found`,
+        });
+      }
+      
+      logger.error({ error }, 'Error fetching resource');
+      return res.status(500).json({
+        error: 'Database error',
+        message: error.message,
+      });
+    }
+    
+    logger.info({ resourceId: id }, 'Resource fetched successfully');
+    res.status(200).json(data[0]); // Return the first (and only) result
+  } catch (error) {
+    logger.error({ error }, 'Error in GET /resources/:id');
+    res.status(500).json({
+      error: 'Server error',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * @route   PUT /api/resources/:id
+ * @desc    Update a resource
+ * @access  Contributors and Admins only
+ */
+router.put('/:id', async (req, res) => {
+  try {
+    // Check if user has permission to update resources (contributors and admins only)
+    if (req.user.role !== 'admin' && req.user.role !== 'contributor') {
+      logger.warn(`User ${req.user.id} with role ${req.user.role} not authorized to update resources`);
+      return res.status(403).json({
+        error: 'Not authorized',
+        message: 'Only contributors and administrators can update resources',
+      });
+    }
+
+    const { id } = req.params;
+    const { 
+      name, 
+      location_name, 
+      type, 
+      description, 
+      availability_status, 
+      contact_info, 
+      capacity 
+    } = req.body;
+    
+    // Check if resource exists
     const { data: existingResource, error: resourceError } = await supabase
       .from('resources')
-      .select('*')
-      .eq('id', resourceId)
-      .eq('disaster_id', id)
+      .select('id')
+      .eq('id', id)
       .single();
     
     if (resourceError) {
       if (resourceError.message.includes('No rows found')) {
         return res.status(404).json({
           error: 'Not found',
-          message: `Resource with ID ${resourceId} not found for disaster ${id}`,
+          message: `Resource with ID ${id} not found`,
         });
       }
       
@@ -248,6 +385,10 @@ router.put('/:id/resources/:resourceId', async (req, res) => {
     const updateData = {};
     if (name) updateData.name = name;
     if (type) updateData.type = type;
+    if (description !== undefined) updateData.description = description;
+    if (availability_status) updateData.availability_status = availability_status;
+    if (contact_info !== undefined) updateData.contact_info = contact_info;
+    if (capacity !== undefined) updateData.capacity = capacity;
     
     // If location changed, geocode the new location
     if (location_name && location_name !== existingResource.location_name) {
@@ -277,8 +418,8 @@ router.put('/:id/resources/:resourceId', async (req, res) => {
     const { data, error } = await supabase
       .from('resources')
       .update(updateData)
-      .eq('id', resourceId)
-      .select()
+      .eq('id', id)
+      .select('id')
       .single();
     
     if (error) {
@@ -289,21 +430,32 @@ router.put('/:id/resources/:resourceId', async (req, res) => {
       });
     }
     
+    // Fetch the updated resource with properly formatted location data
+    const { data: updatedResourceWithLocation, error: fetchError } = await supabase
+      .rpc('get_resource_with_text_location', {
+        p_resource_id: id
+      });
+    
+    if (fetchError || !updatedResourceWithLocation || updatedResourceWithLocation.length === 0) {
+      logger.error({ error: fetchError }, 'Error fetching updated resource');
+      return res.status(500).json({
+        error: 'Database error',
+        message: 'Resource updated but could not fetch details',
+      });
+    }
+    
+    const updatedResource = updatedResourceWithLocation[0];
+    
     // Emit socket event for real-time updates
     req.io.emit('resources_updated', {
       action: 'update',
-      disaster_id: id,
-      resource: data,
+      resource: updatedResource,
     });
     
-    logger.info({
-      resourceId,
-      disasterId: id,
-    }, 'Resource updated successfully');
-    
-    res.status(200).json(data);
+    logger.info({ resourceId: id }, 'Resource updated successfully');
+    res.status(200).json(updatedResource);
   } catch (error) {
-    logger.error({ error }, 'Error in PUT /disasters/:id/resources/:resourceId');
+    logger.error({ error }, 'Error in PUT /resources/:id');
     res.status(500).json({
       error: 'Server error',
       message: error.message,
@@ -312,27 +464,35 @@ router.put('/:id/resources/:resourceId', async (req, res) => {
 });
 
 /**
- * @route   DELETE /api/disasters/:id/resources/:resourceId
+ * @route   DELETE /api/resources/:id
  * @desc    Delete a resource
- * @access  Public (authenticated)
+ * @access  Admins only
  */
-router.delete('/:id/resources/:resourceId', async (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const { id, resourceId } = req.params;
+    // Check if user has permission to delete resources (admins only)
+    if (req.user.role !== 'admin') {
+      logger.warn(`User ${req.user.id} with role ${req.user.role} not authorized to delete resources`);
+      return res.status(403).json({
+        error: 'Not authorized',
+        message: 'Only administrators can delete resources',
+      });
+    }
+
+    const { id } = req.params;
     
-    // Check if resource exists and belongs to the disaster
+    // Check if resource exists
     const { data: existingResource, error: resourceError } = await supabase
       .from('resources')
-      .select('*')
-      .eq('id', resourceId)
-      .eq('disaster_id', id)
+      .select('id')
+      .eq('id', id)
       .single();
     
     if (resourceError) {
       if (resourceError.message.includes('No rows found')) {
         return res.status(404).json({
           error: 'Not found',
-          message: `Resource with ID ${resourceId} not found for disaster ${id}`,
+          message: `Resource with ID ${id} not found`,
         });
       }
       
@@ -347,7 +507,7 @@ router.delete('/:id/resources/:resourceId', async (req, res) => {
     const { error } = await supabase
       .from('resources')
       .delete()
-      .eq('id', resourceId);
+      .eq('id', id);
     
     if (error) {
       logger.error({ error }, 'Error deleting resource');
@@ -360,26 +520,25 @@ router.delete('/:id/resources/:resourceId', async (req, res) => {
     // Emit socket event for real-time updates
     req.io.emit('resources_updated', {
       action: 'delete',
-      disaster_id: id,
-      resource_id: resourceId,
+      resource_id: id,
     });
     
-    logger.info({
-      resourceId,
-      disasterId: id,
-    }, 'Resource deleted successfully');
-    
+    logger.info({ resourceId: id }, 'Resource deleted successfully');
     res.status(200).json({
       message: 'Resource deleted successfully',
-      id: resourceId,
+      id: id,
     });
   } catch (error) {
-    logger.error({ error }, 'Error in DELETE /disasters/:id/resources/:resourceId');
+    logger.error({ error }, 'Error in DELETE /resources/:id');
     res.status(500).json({
       error: 'Server error',
       message: error.message,
     });
   }
 });
+
+// ============================================================================
+// DISASTER-SPECIFIC RESOURCE ROUTES (for finding resources near disasters)
+// ============================================================================
 
 module.exports = router;
