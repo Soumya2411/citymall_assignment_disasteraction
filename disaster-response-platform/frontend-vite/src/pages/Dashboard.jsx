@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Heading,
@@ -28,9 +28,8 @@ const Dashboard = ({ socket }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const { user } = useAuth();
   const toast = useToast();
-  
-  // Load disasters
-  const loadDisasters = async () => {
+    // Load disasters
+  const loadDisasters = useCallback(async () => {
     try {
       setIsLoading(true);
       
@@ -67,12 +66,11 @@ const Dashboard = ({ socket }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-  
-  // Initial load
+  }, [tagFilter, searchQuery, toast]);
+    // Initial load
   useEffect(() => {
     loadDisasters();
-  }, [tagFilter]); // Reload when tag filter changes
+  }, [loadDisasters]); // Reload when loadDisasters changes
   
   // Handle search
   useEffect(() => {
@@ -81,7 +79,7 @@ const Dashboard = ({ socket }) => {
     }, 500);
     
     return () => clearTimeout(delaySearch);
-  }, [searchQuery]);
+  }, [loadDisasters]);
   
   // Listen for real-time updates
   useEffect(() => {
@@ -119,15 +117,14 @@ const Dashboard = ({ socket }) => {
     <Box p={4} >
       <Flex align="center" m={6}>
         <Heading size="lg">Active Disasters</Heading>
-        <Spacer />
-        {(user?.role === 'admin' || user?.role === 'contributor') && (
+        <Spacer />        {(user?.role === 'admin' || user?.role === 'contributor') && (
           <Button
             as={RouterLink}
-            to="/disasters/create"
+            to="/create-disaster"
             colorScheme="brand"
             size="sm"
           >
-            Add Disaster
+            Create Disaster
           </Button>
         )}
       </Flex>

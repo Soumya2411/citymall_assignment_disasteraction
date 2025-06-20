@@ -14,6 +14,8 @@ import DisasterDetail from './pages/DisasterDetail';
 import ResourcesMap from './pages/ResourcesMap';
 import ReportIncident from './pages/ReportIncident';
 import ImageVerification from './pages/ImageVerification';
+import CreateDisaster from './pages/CreateDisaster';
+import MyReports from './pages/MyReports';
 
 // Context
 import { useAuth } from './contexts/AuthContext';
@@ -113,6 +115,24 @@ function App() {
               element={
                 <ProtectedRoute>
                   <ImageVerification />
+                </ProtectedRoute>
+              }
+            />
+            
+            <Route
+              path="/create-disaster"
+              element={
+                <ProtectedRoute>
+                  <CreateDisaster />
+                </ProtectedRoute>
+              }
+            />
+            
+            <Route
+              path="/my-reports"
+              element={
+                <ProtectedRoute>
+                  <MyReports />
                 </ProtectedRoute>
               }
             />

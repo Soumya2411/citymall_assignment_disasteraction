@@ -18,7 +18,7 @@ const Header = () => {
           {user?.role === 'admin' || user?.role === 'contributor' ? (
             <Button 
               as={RouterLink} 
-              to="/disasters/create" 
+              to="/create-disaster" 
               colorScheme="whiteAlpha" 
               size="sm"
             >
@@ -40,8 +40,7 @@ const Header = () => {
               </HStack>
             </MenuButton>
             <MenuList color="gray.800">
-              <MenuItem as={RouterLink} to="/profile">Profile</MenuItem>
-              <MenuDivider />
+             
               <MenuItem onClick={logout}>Logout</MenuItem>
             </MenuList>
           </Menu>

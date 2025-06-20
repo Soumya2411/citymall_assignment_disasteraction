@@ -151,7 +151,7 @@ const apiService = {
     return await apiService.updateResourceIndependent(resourceData.id, independentData);
   },
   
-  deleteResource: async (disasterId, resourceId) => {
+  deleteResource: async (resourceId) => {
     // Use independent resource deletion instead
     return await apiService.deleteResourceIndependent(resourceId);
   },

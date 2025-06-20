@@ -36,6 +36,7 @@ import apiService from '../services/apiService';
 import { useAuth } from '../contexts/AuthContext';
 import PageLoader from '../components/PageLoader';
 import ErrorAlert from '../components/ErrorAlert';
+import LocationSearchInput from '../components/LocationSearchInput';
 import '../utils/leafletIcons';
 import { FaMapMarkerAlt } from 'react-icons/fa';
 import L from 'leaflet';
@@ -120,20 +121,24 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [resourceType, setResourceType] = useState('');
-  const [searchLocation, setSearchLocation] = useState('');
+  const [resourceType, setResourceType] = useState('');  const [searchLocation, setSearchLocation] = useState('');
   const [searchRadius, setSearchRadius] = useState(10);
   const [viewMode, setViewMode] = useState('all'); // 'all' or 'disaster'
+  const [innerTabIndex, setInnerTabIndex] = useState(0); // 0 for Map View, 1 for List View
   const { isOpen, onOpen, onClose } = useDisclosure();
   const { 
     isOpen: isDetailOpen, 
     onOpen: onDetailOpen, 
     onClose: onDetailClose 
   } = useDisclosure();
+  const { 
+    isOpen: isEditOpen, 
+    onOpen: onEditOpen, 
+    onClose: onEditClose 
+  } = useDisclosure();
   const [selectedResource, setSelectedResource] = useState(null);
   const { user } = useAuth();
   const toast = useToast();
-
   // Form state for creating new resource
   const [newResource, setNewResource] = useState({
     name: '',
@@ -144,6 +149,21 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
     contact_info: '',
     capacity: '',
   });
+  const [newResourceLocationData, setNewResourceLocationData] = useState(null);
+  
+  // Form state for editing resource
+  const [editResource, setEditResource] = useState({
+    name: '',
+    location_name: '',
+    type: 'shelter',
+    description: '',
+    availability_status: 'available',
+    contact_info: '',
+    capacity: '',
+  });
+  const [editResourceLocationData, setEditResourceLocationData] = useState(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+
   // Load disasters for the dropdown and initial resources
   useEffect(() => {
     const loadDisasters = async () => {
@@ -171,6 +191,7 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
     
     // Load initial resources
     loadResources();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode]); // Added viewMode dependency
   // Load resources based on view mode
   const loadResources = React.useCallback(async () => {
@@ -272,14 +293,30 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
         socket.off('resources_updated');
       };
     }
-  }, [socket, toast]);
-
-  // Handle form input change
+  }, [socket, toast]);  // Handle form input change
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setNewResource((prev) => ({
       ...prev,
       [name]: value,
+    }));
+  };
+
+  // Handle location selection for new resource
+  const handleNewResourceLocationSelected = (location) => {
+    setNewResourceLocationData(location);
+    setNewResource(prev => ({
+      ...prev,
+      location_name: location.location_name
+    }));
+  };
+
+  // Handle location selection for edit resource
+  const handleEditResourceLocationSelected = (location) => {
+    setEditResourceLocationData(location);
+    setEditResource(prev => ({
+      ...prev,
+      location_name: location.location_name
     }));
   };
   // Handle form submission
@@ -296,12 +333,16 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
         });
         return;
       }
-      
-      // Prepare resource data
+        // Prepare resource data
       const resourceData = {
         name: newResource.name,
         location_name: newResource.location_name,
         type: newResource.type,
+        // Include geocoded location data if available
+        ...(newResourceLocationData && {
+          geography_point: newResourceLocationData.geography_point,
+          coordinates: newResourceLocationData.coordinates,
+        }),
       };
       
       // Add optional fields if provided
@@ -314,8 +355,7 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
       
       // Submit resource using independent endpoint
       await apiService.createResourceIndependent(resourceData);
-      
-      // Reset form and close modal
+        // Reset form and close modal
       setNewResource({
         name: '',
         location_name: '',
@@ -325,6 +365,7 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
         contact_info: '',
         capacity: '',
       });
+      setNewResourceLocationData(null);
       onClose();
       
       toast({
@@ -348,6 +389,101 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
       });
     }
   };
+    // Handle edit resource
+  const handleEditResource = (resource) => {
+    setSelectedResource(resource);
+    setEditResource({
+      name: resource.name || '',
+      location_name: resource.location_name || '',
+      type: resource.type || 'shelter',
+      description: resource.description || '',
+      availability_status: resource.availability_status || 'available',
+      contact_info: resource.contact_info || '',
+      capacity: resource.capacity || '',
+    });
+    setEditResourceLocationData(null); // Clear location data
+    onEditOpen();
+  };
+  
+  // Handle edit form input change
+  const handleEditInputChange = (e) => {
+    const { name, value } = e.target;
+    setEditResource(prev => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+  
+  // Handle edit form submission
+  const handleUpdateResource = async () => {
+    try {
+      // Validate form
+      if (!editResource.name || !editResource.location_name || !editResource.type) {
+        toast({
+          title: 'Error',
+          description: 'Please fill all required fields (name, location, type).',
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+        return;
+      }
+      
+      setIsUpdating(true);
+        // Prepare resource data
+      const resourceData = {
+        name: editResource.name,
+        location_name: editResource.location_name,
+        type: editResource.type,
+        // Include geocoded location data if available
+        ...(editResourceLocationData && {
+          geography_point: editResourceLocationData.geography_point,
+          coordinates: editResourceLocationData.coordinates,
+        }),
+      };
+      
+      // Add optional fields if provided
+      if (editResource.description) resourceData.description = editResource.description;
+      if (editResource.availability_status) resourceData.availability_status = editResource.availability_status;
+      if (editResource.contact_info) resourceData.contact_info = editResource.contact_info;
+      if (editResource.capacity && !isNaN(editResource.capacity)) {
+        resourceData.capacity = parseInt(editResource.capacity);
+      }
+      
+      // Update resource
+      const updatedResource = await apiService.updateResourceIndependent(selectedResource.id, resourceData);
+      
+      // Update resource in the list
+      setResources(prev => 
+        prev.map(resource => 
+          resource.id === selectedResource.id ? updatedResource : resource
+        )
+      );
+      
+      onEditClose();
+      
+      toast({
+        title: 'Success',
+        description: 'Resource updated successfully.',
+        status: 'success',
+        duration: 5000,
+        isClosable: true,
+      });
+    } catch (err) {
+      console.error('Error updating resource:', err);
+      toast({
+        title: 'Error',
+        description: 'Failed to update resource.',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // ...existing code...
   return (
     <Box p={4}>
       <Flex align="center" m={6}>
@@ -383,6 +519,7 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
                   value={searchLocation}
                   onChange={(e) => setSearchLocation(e.target.value)}
                   flex={1}
+                  hidden={true}
                 />
                 
                 <Input
@@ -485,7 +622,7 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
           <Text>Please select a disaster to view resources.</Text>
         </Box>
       ) : (
-        <Tabs variant="enclosed" colorScheme="blue" mb={6}>
+        <Tabs variant="enclosed" colorScheme="blue" mb={6} index={innerTabIndex} onChange={setInnerTabIndex}>
           <TabList>
             <Tab>Map View</Tab>
             <Tab>List View</Tab>
@@ -628,16 +765,18 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
                 placeholder="E.g., Red Cross Shelter"
               />
             </FormControl>
-            
-            <FormControl mb={4} isRequired>
-              <FormLabel>Location</FormLabel>
-              <Input
-                name="location_name"
+              <Box mb={4}>
+              <LocationSearchInput
+                label="Location"
+                placeholder="E.g., 123 Main St, New York, NY"
                 value={newResource.location_name}
                 onChange={handleInputChange}
-                placeholder="E.g., 123 Main St, New York, NY"
+                onLocationSelected={handleNewResourceLocationSelected}
+                isRequired={true}
+                helperText="Search for a location to get precise coordinates for mapping."
+                size="md"
               />
-            </FormControl>
+            </Box>
             
             <FormControl mb={4} isRequired>
               <FormLabel>Type</FormLabel>
@@ -822,41 +961,160 @@ const ResourcesMap = ({ socket }) => {  const [resources, setResources] = useSta
           <ModalFooter>
             <Button colorScheme="blue" mr={3} onClick={onDetailClose}>
               Close
-            </Button>
-            {(user?.role === 'admin' || user?.role === 'contributor') && (
-              <Button 
-                variant="outline" 
-                colorScheme="red"
-                onClick={() => {
-                  if (window.confirm('Are you sure you want to delete this resource?')) {
-                    apiService.deleteResource(selectedResource.id)
-                      .then(() => {
-                        toast({
-                          title: 'Resource Deleted',
-                          description: 'The resource has been successfully deleted.',
-                          status: 'success',
-                          duration: 5000,
-                          isClosable: true,
+            </Button>            {(user?.role === 'admin' || user?.role === 'contributor') && (
+              <>
+                <Button 
+                  variant="outline" 
+                  colorScheme="blue"
+                  mr={3}
+                  onClick={() => {
+                    onDetailClose();
+                    handleEditResource(selectedResource);
+                  }}
+                >
+                  Edit Resource
+                </Button>
+                <Button 
+                  variant="outline" 
+                  colorScheme="red"
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to delete this resource?')) {
+                      console.log(selectedResource);
+                      apiService.deleteResource(selectedResource.id)
+                        .then(() => {
+                          toast({
+                            title: 'Resource Deleted',
+                            description: 'The resource has been successfully deleted.',
+                            status: 'success',
+                            duration: 5000,
+                            isClosable: true,
+                          });
+                          onDetailClose();
+                          // Resources will be updated via socket
+                        })
+                        .catch(err => {
+                          console.error('Error deleting resource:', err);
+                          toast({
+                            title: 'Error',
+                            description: 'Failed to delete resource.',
+                            status: 'error',
+                            duration: 5000,
+                            isClosable: true,
+                          });
                         });
-                        onDetailClose();
-                        // Resources will be updated via socket
-                      })
-                      .catch(err => {
-                        console.error('Error deleting resource:', err);
-                        toast({
-                          title: 'Error',
-                          description: 'Failed to delete resource.',
-                          status: 'error',
-                          duration: 5000,
-                          isClosable: true,
-                        });
-                      });
-                  }
-                }}
-              >
-                Delete Resource
-              </Button>
+                    }
+                  }}
+                >
+                  Delete Resource
+                </Button>
+              </>
             )}
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Modal for editing resource */}
+      <Modal isOpen={isEditOpen} onClose={onEditClose} size="lg">
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>Edit Resource</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            {selectedResource && (
+              <Box>
+                <FormControl mb={4} isRequired>
+                  <FormLabel>Resource Name</FormLabel>
+                  <Input
+                    name="name"
+                    value={editResource.name}
+                    onChange={handleEditInputChange}
+                    placeholder="E.g., Red Cross Shelter"
+                  />
+                </FormControl>
+                  <Box mb={4}>
+                  <LocationSearchInput
+                    label="Location"
+                    placeholder="E.g., 123 Main St, New York, NY"
+                    value={editResource.location_name}
+                    onChange={handleEditInputChange}
+                    onLocationSelected={handleEditResourceLocationSelected}
+                    isRequired={true}
+                    helperText="Search for a location to get precise coordinates for mapping."
+                    size="md"
+                  />
+                </Box>
+                
+                <FormControl mb={4} isRequired>
+                  <FormLabel>Type</FormLabel>
+                  <Select
+                    name="type"
+                    value={editResource.type}
+                    onChange={handleEditInputChange}
+                  >
+                    <option value="shelter">Shelter</option>
+                    <option value="medical">Medical</option>
+                    <option value="supplies">Supplies</option>
+                    <option value="command">Command</option>
+                    <option value="food">Food</option>
+                    <option value="water">Water</option>
+                    <option value="power">Power</option>
+                    <option value="evacuation">Evacuation</option>
+                  </Select>
+                </FormControl>
+                
+                <FormControl mb={4}>
+                  <FormLabel>Description</FormLabel>
+                  <Input
+                    name="description"
+                    value={editResource.description}
+                    onChange={handleEditInputChange}
+                    placeholder="Brief description of the resource..."
+                  />
+                </FormControl>
+                
+                <FormControl mb={4}>
+                  <FormLabel>Availability Status</FormLabel>
+                  <Select
+                    name="availability_status"
+                    value={editResource.availability_status}
+                    onChange={handleEditInputChange}
+                  >
+                    <option value="available">Available</option>
+                    <option value="limited">Limited</option>
+                    <option value="unavailable">Unavailable</option>
+                  </Select>
+                </FormControl>
+                
+                <FormControl mb={4}>
+                  <FormLabel>Contact Info</FormLabel>
+                  <Input
+                    name="contact_info"
+                    value={editResource.contact_info}
+                    onChange={handleEditInputChange}
+                    placeholder='E.g., {"phone": "555-0123", "email": "contact@example.com"}'
+                  />
+                </FormControl>
+                
+                <FormControl mb={4}>
+                  <FormLabel>Capacity</FormLabel>
+                  <Input
+                    name="capacity"
+                    type="number"
+                    value={editResource.capacity}
+                    onChange={handleEditInputChange}
+                    placeholder="Maximum capacity (number of people/items)"
+                  />
+                </FormControl>
+              </Box>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={onEditClose}>
+              Cancel
+            </Button>
+            <Button colorScheme="blue" onClick={handleUpdateResource} isLoading={isUpdating}>
+              Save Changes
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

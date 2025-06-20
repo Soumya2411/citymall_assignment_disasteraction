@@ -346,9 +346,7 @@ router.put('/:id', async (req, res) => {
         error: 'Not authorized',
         message: 'Only contributors and administrators can update resources',
       });
-    }
-
-    const { id } = req.params;
+    }    const { id } = req.params;
     const { 
       name, 
       location_name, 
@@ -362,7 +360,7 @@ router.put('/:id', async (req, res) => {
     // Check if resource exists
     const { data: existingResource, error: resourceError } = await supabase
       .from('resources')
-      .select('id')
+      .select('id, location_name')
       .eq('id', id)
       .single();
     

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Flex, Icon, Link, Text, VStack, HStack, Divider, useColorModeValue } from '@chakra-ui/react';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
-import { FiHome, FiMap, FiFileText, FiImage, FiUser } from 'react-icons/fi';
+import { FiHome, FiMap, FiFileText, FiImage, FiUser, FiPlus, FiList } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 
 const MenuItem = ({ icon, label, to, isActive }) => {
@@ -45,14 +45,16 @@ const MenuItem = ({ icon, label, to, isActive }) => {
 const Sidebar = () => {
   const { pathname } = useLocation();
   const { user } = useAuth();
-  
-  const menuItems = [
+    const menuItems = [
     { icon: FiHome, label: 'Dashboard', to: '/' },
     { icon: FiMap, label: 'Resources Map', to: '/resources' },
     { icon: FiFileText, label: 'Report Incident', to: '/report' },
+    { icon: FiList, label: 'My Reports', to: '/my-reports' },
     { icon: FiImage, label: 'Image Verification', to: '/verify-image' },
-    { icon: FiUser, label: 'Profile', to: '/profile' },
   ];
+  
+  // Add Create Disaster option for admin and contributor users
+
   
   return (
     <Box

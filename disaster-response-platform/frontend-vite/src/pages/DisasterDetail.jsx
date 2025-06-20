@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
   Heading,
@@ -18,13 +18,32 @@ import {
   TabPanel,
   useToast,
   Button,
+  Modal,
+  ModalOverlay,
+  ModalContent,
+  ModalHeader,
+  ModalCloseButton,
+  ModalBody,
+  ModalFooter,
+  FormControl,
+  FormLabel,
+  Input,
+  Textarea,
+  useDisclosure,
+  Tag,
+  TagLabel,
+  TagCloseButton,
+  Wrap,
+  WrapItem,
 } from '@chakra-ui/react';
 import apiService from '../services/apiService';
 import ErrorAlert from '../components/ErrorAlert';
+import LocationSearchInput from '../components/LocationSearchInput';
 import { useAuth } from '../contexts/AuthContext';
 
 const DisasterDetail = ({ socket }) => {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [disaster, setDisaster] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -33,6 +52,17 @@ const DisasterDetail = ({ socket }) => {
   const [updates, setUpdates] = useState([]);
   const [reports, setReports] = useState([]);
   const toast = useToast();
+  
+  // Edit disaster modal state
+  const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure();
+  const [editFormData, setEditFormData] = useState({
+    title: '',    location_name: '',
+    description: '',
+  });
+  const [editTags, setEditTags] = useState([]);
+  const [currentEditTag, setCurrentEditTag] = useState('');
+  const [editLocationData, setEditLocationData] = useState(null);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // Format date
   const formatDate = (dateString) => {
@@ -113,51 +143,130 @@ const DisasterDetail = ({ socket }) => {
       });
     }
   };
-  // Handle report update
-  const handleUpdateReport = async (reportId) => {
-    // For now, just show a toast - in a real app, this would open an edit form
-    toast({
-      title: 'Update Report',
-      description: `Update functionality for report ${reportId} would open an edit form here`,
-      status: 'info',
-      duration: 3000,
-      isClosable: true,
-    });
-  };
 
-  // Handle report deletion
-  const handleDeleteReport = async (reportId) => {
-    if (!window.confirm('Are you sure you want to delete this report? This action cannot be undone.')) {
+
+  // Delete disaster function
+  const handleDeleteDisaster = async () => {
+    if (!window.confirm('Are you sure you want to delete this disaster? This action cannot be undone.')) {
       return;
     }
 
     try {
-      await apiService.deleteReport(reportId);
-      
-      // Remove from local state
-      setReports(prev => prev.filter(report => report.id !== reportId));
+      await apiService.deleteDisaster(id);
       
       toast({
-        title: 'Report Deleted',
-        description: 'Report has been successfully deleted',
+        title: 'Disaster Deleted',
+        description: 'The disaster has been successfully deleted.',
         status: 'success',
-        duration: 3000,
+        duration: 5000,
         isClosable: true,
       });
-    } catch (err) {
-      console.error('Error deleting report:', err);
+      
+      // Navigate back to dashboard
+      navigate('/');
+    } catch (error) {
+      console.error('Error deleting disaster:', error);
+      
       toast({
-        title: 'Error',
-        description: 'Failed to delete report',
+        title: 'Error Deleting Disaster',
+        description: error.message || 'An unexpected error occurred',
         status: 'error',
-        duration: 5000,
+        duration: 7000,
         isClosable: true,
       });
     }
   };
 
-  // Handle create report
+  // Check if user can delete disaster (admin or owner)
+  const canDeleteDisaster = user && (user.role === 'admin' || user.id === disaster?.owner_id);
+  
+  // Check if user can edit disaster (admin or owner)
+  const canEditDisaster = user && (user.role === 'admin' || user.id === disaster?.owner_id);
+    // Handle opening edit modal
+  const handleEditDisaster = () => {
+    if (disaster) {
+      setEditFormData({
+        title: disaster.title,
+        location_name: disaster.location_name,
+        description: disaster.description,
+      });
+      setEditTags(disaster.tags || []);
+      setEditLocationData(null); // Clear location data
+      onEditOpen();
+    }
+  };
+    // Handle edit form input change
+  const handleEditInputChange = (e) => {
+    const { name, value } = e.target;
+    setEditFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
 
+  // Handle location selection for edit disaster
+  const handleEditLocationSelected = (location) => {
+    setEditLocationData(location);
+    setEditFormData(prev => ({
+      ...prev,
+      location_name: location.location_name
+    }));
+  };
+  
+  // Handle adding tag in edit modal
+  const handleAddEditTag = () => {
+    if (currentEditTag.trim() && !editTags.includes(currentEditTag.trim())) {
+      setEditTags(prev => [...prev, currentEditTag.trim()]);
+      setCurrentEditTag('');
+    }
+  };
+  
+  // Handle removing tag in edit modal
+  const handleRemoveEditTag = (tagToRemove) => {
+    setEditTags(prev => prev.filter(tag => tag !== tagToRemove));
+  };
+  
+  // Handle edit form submission
+  const handleUpdateDisaster = async () => {
+    setIsUpdating(true);
+      try {
+      const updateData = {
+        ...editFormData,
+        tags: editTags.length > 0 ? editTags : undefined,
+        // Include geocoded location data if available
+        ...(editLocationData && {
+          geography_point: editLocationData.geography_point,
+          coordinates: editLocationData.coordinates,
+        }),
+      };
+      
+      const updatedDisaster = await apiService.updateDisaster(id, updateData);
+      setDisaster(updatedDisaster);
+      onEditClose();
+      
+      toast({
+        title: 'Disaster Updated',
+        description: 'The disaster has been successfully updated.',
+        status: 'success',
+        duration: 5000,
+        isClosable: true,
+      });
+    } catch (error) {
+      console.error('Error updating disaster:', error);
+      
+      toast({
+        title: 'Error Updating Disaster',
+        description: error.message || 'An unexpected error occurred',
+        status: 'error',
+        duration: 7000,
+        isClosable: true,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // Fetch disaster details
   useEffect(() => {
     const fetchDisasterDetails = async () => {
       setLoading(true);
@@ -311,11 +420,35 @@ const DisasterDetail = ({ socket }) => {
               {tag}
             </Badge>
           ))}
+        </HStack>        <HStack justify="space-between" align="center" w="full">
+          <Heading as="h1" size="xl">
+            {disaster.title}
+          </Heading>
+          
+          <HStack spacing={2}>
+            {canEditDisaster && (
+              <Button
+                colorScheme="blue"
+                variant="outline"
+                size="sm"
+                onClick={handleEditDisaster}
+              >
+                Edit Disaster
+              </Button>
+            )}
+            
+            {canDeleteDisaster && (
+              <Button
+                colorScheme="red"
+                variant="outline"
+                size="sm"
+                onClick={handleDeleteDisaster}
+              >
+                Delete Disaster
+              </Button>
+            )}
+          </HStack>
         </HStack>
-
-        <Heading as="h1" size="xl">
-          {disaster.title}
-        </Heading>
 
         <Text fontSize="lg" fontWeight="bold">
           Location: {disaster.location_name}
@@ -428,26 +561,8 @@ const DisasterDetail = ({ socket }) => {
                             </HStack>
                           )}
                           
-                          {/* Admin-only controls */}
-                          {user.role === 'admin' && (
-                            <HStack spacing={2}>
-                              <Button
-                                size="sm"
-                                colorScheme="blue"
-                                onClick={() => handleUpdateReport(report.id)}
-                              >
-                                Update
-                              </Button>
-                              <Button
-                                size="sm"
-                                colorScheme="red"
-                                variant="outline"
-                                onClick={() => handleDeleteReport(report.id)}
-                              >
-                                Delete
-                              </Button>
-                            </HStack>
-                          )}
+              
+                        
                         </VStack>
                       )}
                     </Box>
@@ -495,10 +610,101 @@ const DisasterDetail = ({ socket }) => {
                   ))}
                 </VStack>
               )}
-            </TabPanel>
-          </TabPanels>
+            </TabPanel>          </TabPanels>
         </Tabs>
       </VStack>
+      
+      {/* Edit Disaster Modal */}
+      <Modal isOpen={isEditOpen} onClose={onEditClose} size="lg">
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>Edit Disaster</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack spacing={4} align="stretch">
+              <FormControl isRequired>
+                <FormLabel>Disaster Title</FormLabel>
+                <Input
+                  name="title"
+                  value={editFormData.title}
+                  onChange={handleEditInputChange}
+                  placeholder="e.g., Hurricane Katrina Response"
+                />
+              </FormControl>              <Box>
+                <LocationSearchInput
+                  label="Location"
+                  placeholder="e.g., New Orleans, Louisiana"
+                  value={editFormData.location_name}
+                  onChange={handleEditInputChange}
+                  onLocationSelected={handleEditLocationSelected}
+                  helperText="Search for a location to get precise coordinates."
+                  size="md"
+                />
+              </Box>
+
+              <FormControl isRequired>
+                <FormLabel>Description</FormLabel>
+                <Textarea
+                  name="description"
+                  value={editFormData.description}
+                  onChange={handleEditInputChange}
+                  placeholder="Provide detailed information about the disaster..."
+                  rows={4}
+                  resize="vertical"
+                />
+              </FormControl>
+
+              <FormControl>
+                <FormLabel>Tags</FormLabel>
+                <HStack>
+                  <Input
+                    value={currentEditTag}
+                    onChange={(e) => setCurrentEditTag(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddEditTag())}
+                    placeholder="Add tags (e.g., hurricane, flood, evacuation)"
+                    flex={1}
+                  />
+                  <Button onClick={handleAddEditTag} colorScheme="blue" variant="outline">
+                    Add Tag
+                  </Button>
+                </HStack>
+                
+                {editTags.length > 0 && (
+                  <Box mt={3}>
+                    <Text fontSize="sm" color="gray.600" mb={2}>
+                      Current tags:
+                    </Text>
+                    <Wrap>
+                      {editTags.map((tag, index) => (
+                        <WrapItem key={index}>
+                          <Tag size="md" colorScheme="blue" variant="solid">
+                            <TagLabel>{tag}</TagLabel>
+                            <TagCloseButton onClick={() => handleRemoveEditTag(tag)} />
+                          </Tag>
+                        </WrapItem>
+                      ))}
+                    </Wrap>
+                  </Box>
+                )}
+              </FormControl>
+            </VStack>
+          </ModalBody>
+          
+          <ModalFooter>
+            <Button variant="ghost" mr={3} onClick={onEditClose}>
+              Cancel
+            </Button>
+            <Button
+              colorScheme="blue"
+              onClick={handleUpdateDisaster}
+              isLoading={isUpdating}
+              loadingText="Updating..."
+            >
+              Update Disaster
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </Container>
   );
 };
