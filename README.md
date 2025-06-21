@@ -216,25 +216,13 @@ WebSocket-based updates ensure all users see changes immediately without page re
 ### Multi-Service Geocoding
 Fallback system using OpenStreetMap (free), Google Maps, or Mapbox for reliable location services.
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## 🙏 Acknowledgments
 
-- Built with assistance from GitHub Copilot for enhanced development productivity
 - Uses Supabase for robust database and real-time features
 - Powered by Google Gemini AI for intelligent text and image processing
 - Map data provided by OpenStreetMap contributors
 
 ---
 
-For detailed function documentation, see [FUNCTIONS_DOCUMENTATION.md](./FUNCTIONS_DOCUMENTATION.md)
+For detailed function documentation, see [FUNCTIONS_DOCUMENTATION.md](./disaster-response-platform/FUNCTIONS_DOCUMENTATION.md)
